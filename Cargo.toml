@@ -1,5 +1,5 @@
 [package]
-name = "rust-project-template"
+name = "bevy_grid_snapping"
 version = "0.1.0"
 edition = "2024"
 
