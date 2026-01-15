@@ -7,11 +7,10 @@ use bevy::{
 
 // Components
 #[derive(Component)]
-#[require(AttachedCells)]
+#[require(AttachedCells, Transform)]
 pub struct Grid {
     pub cell_size: Vec2,
     pub cell_gap: Vec2,
-    pub grid_size: (Option<u32>, Option<u32>),
 }
 impl Grid {
     fn get_cell_position(&self, cell: &GridCell) -> Vec3 {
@@ -37,21 +36,22 @@ pub struct AttachedToGrid(pub Entity);
 // Events
 #[derive(EntityEvent)]
 pub struct CellToSnap {
-    entity: Entity,
+    pub entity: Entity,
 }
 impl CellToSnap {
+    #[allow(clippy::needless_pass_by_value)]
     fn observer(
         event: On<Self>,
         mut grid_cells_q: Query<(&mut Transform, &GridCell, &AttachedToGrid)>,
-        grids_q: Query<&Grid>,
+        grids_q: Query<(&Grid, &Transform)>,
     ) {
-        let Ok((mut transform, cell, grid)) = grid_cells_q.get_mut(event.entity) else {
+        let Ok((mut cell_transform, cell, grid)) = grid_cells_q.get_mut(event.entity) else {
             return;
         };
-        let Ok(grid) = grids_q.get(grid.0) else {
+        let Ok((grid, grid_transform)) = grids_q.get(grid.0) else {
             return;
         };
-        transform.translation = grid.get_cell_position(cell);
+        cell_transform.translation = grid_transform.translation + grid.get_cell_position(cell);
     }
 }
 
