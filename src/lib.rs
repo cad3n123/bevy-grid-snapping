@@ -22,7 +22,7 @@ impl Grid {
 #[derive(Component)]
 #[require(Transform)]
 pub struct GridCell {
-    coordinate: IVec2,
+    pub coordinate: IVec2,
 }
 
 // Relationships
