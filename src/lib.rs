@@ -1,6 +1,13 @@
 use bevy::{
-    app::{App, Plugin},
-    ecs::{component::Component, entity::Entity, event::EntityEvent, observer::On, system::Query},
+    app::{App, Plugin, Update},
+    ecs::{
+        component::Component,
+        entity::Entity,
+        event::EntityEvent,
+        observer::On,
+        query::{Changed, Without},
+        system::{Commands, Query},
+    },
     math::{IVec2, Vec2, Vec3},
     transform::components::Transform,
 };
@@ -15,6 +22,13 @@ pub struct Grid {
 impl Grid {
     fn get_cell_position(&self, cell: &GridCell) -> Vec3 {
         (cell.coordinate.as_vec2() * (self.cell_size + self.cell_gap)).extend(0.)
+    }
+    fn on_changed(mut commands: Commands, grid_q: Query<&AttachedCells, Changed<Transform>>) {
+        for attached_cells in grid_q {
+            for &entity in &attached_cells.0 {
+                commands.trigger(UpdateCellPosition { entity });
+            }
+        }
     }
 }
 
@@ -35,15 +49,15 @@ pub struct AttachedToGrid(pub Entity);
 
 // Events
 #[derive(EntityEvent)]
-pub struct CellToSnap {
+pub struct UpdateCellPosition {
     pub entity: Entity,
 }
-impl CellToSnap {
+impl UpdateCellPosition {
     #[allow(clippy::needless_pass_by_value)]
     fn observer(
         event: On<Self>,
         mut grid_cells_q: Query<(&mut Transform, &GridCell, &AttachedToGrid)>,
-        grids_q: Query<(&Grid, &Transform)>,
+        grids_q: Query<(&Grid, &Transform), Without<GridCell>>,
     ) {
         let Ok((mut cell_transform, cell, grid)) = grid_cells_q.get_mut(event.entity) else {
             return;
@@ -54,12 +68,45 @@ impl CellToSnap {
         cell_transform.translation = grid_transform.translation + grid.get_cell_position(cell);
     }
 }
+#[derive(EntityEvent)]
+pub struct SnapCellToGrid {
+    pub entity: Entity,
+}
+impl SnapCellToGrid {
+    #[allow(clippy::needless_pass_by_value)]
+    fn observer(
+        event: On<Self>,
+        mut commands: Commands,
+        mut grid_cells_q: Query<(&mut GridCell, &Transform, &AttachedToGrid)>,
+        grids_q: Query<(&Grid, &Transform), Without<GridCell>>,
+    ) {
+        let Ok((mut cell, cell_transform, grid)) = grid_cells_q.get_mut(event.entity) else {
+            return;
+        };
+        let Ok((grid, grid_transform)) = grids_q.get(grid.0) else {
+            return;
+        };
+
+        let local_translation =
+            (cell_transform.translation - grid_transform.translation).truncate();
+
+        cell.coordinate = (local_translation / (grid.cell_gap + grid.cell_size))
+            .round()
+            .as_ivec2();
+
+        commands.trigger(UpdateCellPosition {
+            entity: event.entity,
+        });
+    }
+}
 
 #[derive(Default)]
 pub struct GridPlugin;
 
 impl Plugin for GridPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(CellToSnap::observer);
+        app.add_observer(UpdateCellPosition::observer)
+            .add_observer(SnapCellToGrid::observer);
+        app.add_systems(Update, Grid::on_changed);
     }
 }
