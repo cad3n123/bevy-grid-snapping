@@ -49,13 +49,43 @@ impl Grid {
     fn get_cell_position(&self, cell: &GridCell) -> Vec3 {
         (cell.coordinate.as_vec2() * (self.cell_size + self.cell_gap) + self.offset).extend(0.)
     }
-    fn get_cell_coordinate(&self, grid_transform: &Transform, cell_transform: &Transform) -> UVec2 {
+    fn get_cell_coordinate(
+        &self,
+        grid_transform: &Transform,
+        cell_transform: &Transform,
+        round_to_nearest: bool,
+    ) -> Option<UVec2> {
         let local_translation =
             (cell_transform.translation - grid_transform.translation).truncate() - self.offset;
 
-        (local_translation / (self.cell_gap + self.cell_size))
+        let int_result = (local_translation / (self.cell_gap + self.cell_size))
             .round()
-            .as_uvec2()
+            .as_ivec2();
+
+        if round_to_nearest {
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+            return Some(UVec2::new(
+                if let Some(dim_x) = self.dimensions.0 {
+                    int_result.x.clamp(0, dim_x as i32)
+                } else {
+                    int_result.x.max(0)
+                } as u32,
+                if let Some(dim_y) = self.dimensions.1 {
+                    int_result.y.clamp(0, dim_y as i32)
+                } else {
+                    int_result.y.max(0)
+                } as u32,
+            ));
+        }
+
+        if !int_result.x.is_negative()
+            && !int_result.y.is_negative()
+            && self.is_coordinate_valid(int_result.as_uvec2())
+        {
+            Some(int_result.as_uvec2())
+        } else {
+            None
+        }
     }
     fn is_coordinate_valid(&self, coordinate: UVec2) -> bool {
         self.dimensions.0.is_none_or(|width| coordinate.x < width)
@@ -185,7 +215,12 @@ impl SnapCellToGrid {
             return;
         };
 
-        cell.coordinate = grid.get_cell_coordinate(grid_transform, cell_transform);
+        let Some(coordinate) = grid.get_cell_coordinate(grid_transform, cell_transform, true)
+        else {
+            return;
+        };
+
+        cell.coordinate = coordinate;
 
         commands.trigger(UpdateCellPosition {
             entity: event.entity,
@@ -211,14 +246,15 @@ impl TrySnapCellToGrid {
             return;
         };
 
-        let coordinate = grid.get_cell_coordinate(grid_transform, cell_transform);
+        let Some(coordinate) = grid.get_cell_coordinate(grid_transform, cell_transform, false)
+        else {
+            return;
+        };
 
-        if grid.is_coordinate_valid(coordinate) {
-            cell.coordinate = coordinate;
+        cell.coordinate = coordinate;
 
-            commands.trigger(UpdateCellPosition {
-                entity: event.entity,
-            });
-        }
+        commands.trigger(UpdateCellPosition {
+            entity: event.entity,
+        });
     }
 }
