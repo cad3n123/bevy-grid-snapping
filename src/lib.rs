@@ -1,3 +1,11 @@
+#[cfg(feature = "debug")]
+use bevy::{
+    app::Last,
+    ecs::{
+        hierarchy::Children,
+        query::{Added, Has, Or, With},
+    },
+};
 use bevy::{
     app::{App, Plugin, Update},
     ecs::{
@@ -12,21 +20,38 @@ use bevy::{
     transform::components::Transform,
 };
 
+#[derive(Default)]
+pub struct GridPlugin;
+
+impl Plugin for GridPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_observer(UpdateCellPosition::observer)
+            .add_observer(SnapCellToGrid::observer)
+            .add_observer(TrySnapCellToGrid::observer);
+        app.add_systems(Update, Grid::on_changed);
+
+        #[cfg(feature = "debug")]
+        app.add_systems(Last, Grid::debug_on_changed);
+    }
+}
+
 // Components
 #[derive(Component)]
 #[require(AttachedCells, Transform)]
 pub struct Grid {
     pub cell_size: Vec2,
     pub cell_gap: Vec2,
+    pub offset: Vec2,
     pub dimensions: (Option<u32>, Option<u32>),
 }
+
 impl Grid {
     fn get_cell_position(&self, cell: &GridCell) -> Vec3 {
-        (cell.coordinate.as_vec2() * (self.cell_size + self.cell_gap)).extend(0.)
+        (cell.coordinate.as_vec2() * (self.cell_size + self.cell_gap) + self.offset).extend(0.)
     }
     fn get_cell_coordinate(&self, grid_transform: &Transform, cell_transform: &Transform) -> UVec2 {
         let local_translation =
-            (cell_transform.translation - grid_transform.translation).truncate();
+            (cell_transform.translation - grid_transform.translation).truncate() - self.offset;
 
         (local_translation / (self.cell_gap + self.cell_size))
             .round()
@@ -43,9 +68,63 @@ impl Grid {
             }
         }
     }
-}
 
+    #[cfg(feature = "debug")]
+    fn debug_on_changed(
+        mut commands: Commands,
+        grid_q: Query<(Entity, &Self, Option<&Children>), Or<(Added<Self>, Changed<Self>)>>,
+        cell_outlines_q: Query<Entity, With<DebugCellOutline>>,
+    ) {
+        use bevy::{
+            color::{Alpha, Color, palettes::tailwind::GREEN_400},
+            sprite::Sprite,
+            utils::default,
+        };
+        for (grid_e, grid, grid_children) in grid_q {
+            // Despawn any cell outlines
+            if let Some(grid_children) = grid_children {
+                for &child in grid_children {
+                    if cell_outlines_q.get(child).is_ok() {
+                        commands.entity(child).despawn();
+                    }
+                }
+            }
+            // Spawn new cell outlines
+            let dimensions = (
+                grid.dimensions.0.unwrap_or(100),
+                grid.dimensions.1.unwrap_or(100),
+            );
+
+            commands.entity(grid_e).with_children(|parent| {
+                for x in 0..dimensions.0 {
+                    for y in 0..dimensions.1 {
+                        #[allow(clippy::cast_precision_loss)]
+                        let transform = Transform::from_xyz(
+                            x as f32 * (grid.cell_size.x + grid.cell_gap.x) + grid.offset.x,
+                            y as f32 * (grid.cell_size.y + grid.cell_gap.y) + grid.offset.y,
+                            0.0,
+                        );
+
+                        parent.spawn((
+                            DebugCellOutline,
+                            Sprite {
+                                color: Color::from(GREEN_400.with_alpha(0.2)),
+                                custom_size: Some(grid.cell_size - 0.2),
+                                ..default()
+                            },
+                            transform,
+                        ));
+                    }
+                }
+            });
+        }
+    }
+}
+#[cfg(feature = "debug")]
 #[derive(Component)]
+struct DebugCellOutline;
+
+#[derive(Component, Default)]
 #[require(Transform)]
 pub struct GridCell {
     pub coordinate: UVec2,
@@ -57,6 +136,7 @@ pub struct GridCell {
 pub struct AttachedCells(Vec<Entity>);
 
 #[derive(Component)]
+#[require(GridCell)]
 #[relationship(relationship_target = AttachedCells)]
 pub struct AttachedToGrid(pub Entity);
 
@@ -65,6 +145,7 @@ pub struct AttachedToGrid(pub Entity);
 pub struct UpdateCellPosition {
     pub entity: Entity,
 }
+
 impl UpdateCellPosition {
     #[allow(clippy::needless_pass_by_value)]
     fn observer(
@@ -78,7 +159,11 @@ impl UpdateCellPosition {
         let Ok((grid, grid_transform)) = grids_q.get(grid.0) else {
             return;
         };
-        cell_transform.translation = grid_transform.translation + grid.get_cell_position(cell);
+        let cell_position = grid.get_cell_position(cell);
+        cell_transform.translation = grid_transform
+            .translation
+            .with_z(cell_transform.translation.z)
+            + cell_position;
     }
 }
 #[derive(EntityEvent)]
@@ -135,17 +220,5 @@ impl TrySnapCellToGrid {
                 entity: event.entity,
             });
         }
-    }
-}
-
-#[derive(Default)]
-pub struct GridPlugin;
-
-impl Plugin for GridPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_observer(UpdateCellPosition::observer)
-            .add_observer(SnapCellToGrid::observer)
-            .add_observer(TrySnapCellToGrid::observer);
-        app.add_systems(Update, Grid::on_changed);
     }
 }

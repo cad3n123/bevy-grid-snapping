@@ -21,3 +21,6 @@ opt-level = 3
 
 [build]
 rustc-wrapper = "sccache"
+
+[features]
+debug = []
